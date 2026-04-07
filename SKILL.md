@@ -1,19 +1,18 @@
 ---
 name: openclaw-banana-image
-description: 为抖音直播礼物设计师提供意图分析 + 价效规范检查 + 多参考图组合 + Banana 图像生成的完整工作流 skill。支持从运营飞书文档提取需求约束，自动路由 txt2img/img2img/inpaint/background-replace 模式，多轮对话补全缺失信息，结果发回飞书群。可单独使用，也可作为子 agent 嵌入完整创作 agent。
+description: 为抖音直播礼物设计师提供价效规范检查 + 多参考图组合 + Banana 图像生成的完整工作流 skill。意图分析、运营文档提取、合规表格输出均由 OpenClaw Agent 处理；脚本仅负责图像生成，只需配置 ZENMUX_API_KEY。
 ---
 
 # OpenClaw Banana Image
 
 ## Overview
 
-This skill routes Douyin Live gift design requests for OpenClaw. It:
+This skill routes Douyin Live gift design requests for OpenClaw. Architecture:
 
-1. **Reads ops documents** from Feishu links or pasted text to extract price-tier requirements and visual direction.
-2. **Analyzes designer intent** using a text LLM — understands structured instructions like "take composition from ref1, color from ref2", checks price-tier compliance (价效规范), and optimizes the generation prompt.
-3. **Routes to the right model** — creative txt2img goes to Seedream, editing/inpaint/combination goes to Banana (Gemini image).
-4. **Generates images** via the Zenmux Vertex AI `generateContent` endpoint.
-5. **Delivers results** to a Feishu chat with intent summary, optimized prompt, and price-tier compliance notes.
+- **OpenClaw Agent** — handles all intelligence: reads ops docs, extracts gift items, checks price-tier compliance, analyzes designer intent, optimizes prompts, creates Feishu design docs.
+- **`scripts/banana-image.mjs`** — handles all image generation: calls the Zenmux Vertex AI `generateContent` endpoint, saves output, returns OpenClaw-compatible `mediaUrls` (base64 data URIs).
+
+Only one API key is needed: `ZENMUX_API_KEY` (or `GEMINI_API_KEY`).
 
 ## GitHub Install
 
@@ -38,16 +37,13 @@ Use $skill-installer to install this skill from https://github.com/<owner>/<repo
 - Base URL: `https://zenmux.ai/api/vertex-ai`
 - Endpoint pattern: `/v1/publishers/{provider}/models/{model}:generateContent`
 - Image model: `google/gemini-3-pro-image-preview` (auto-routed)
-- Text LLM: `gpt-4o` via OpenAI-compatible endpoint
 - API key env vars: `ZENMUX_API_KEY`, `GEMINI_API_KEY`
-- Text LLM env vars: `TEXT_LLM_API_KEY`, `TEXT_LLM_BASE_URL`, `TEXT_LLM_MODEL`
-- Model mode: `auto` (intent-driven routing)
 
 ## When to Use
 
 Use this skill when the request involves Douyin Live gift raster image workflows:
 
-- **ops doc intake** — user provides a Feishu doc or pastes ops text without a specific task → output price-tier compliance table
+- **ops doc intake** — user provides a Feishu doc or pastes ops text without a specific task → Agent outputs price-tier compliance table and creates a Feishu design doc
 - text-to-image generation from ops brief
 - image-to-image editing on a base image
 - inpaint or localized edits
@@ -58,38 +54,37 @@ Do not use it for vector assets, SVG/logo systems, or code-native graphics.
 
 ## Workflow
 
-### Mode A — Ops Doc Intake (no task yet)
+### Mode A — Ops Doc Intake (no design task yet)
 
-When the user provides an ops document but has not specified a design task:
+Handled entirely by the Agent (no script call):
 
-1. Pass the document via `--ops-doc-text` or `--feishu-doc-url` without `--task`.
-2. The script extracts every gift item and its price from the doc using a text LLM.
-3. Locally matches each price to the Douyin gift 价效梯度 table.
-4. Outputs a markdown compliance table showing tier, recommended subject types, duration, camera, particle, and 3D/vibration/sound flags for each gift.
-5. Present the table to the user. They can then pick a gift and proceed to Mode B.
-
-```bash
-node ./scripts/banana-image.mjs \
-  --feishu-doc-url "https://bytedance.larkoffice.com/docx/xxx"
-```
-
-```bash
-node ./scripts/banana-image.mjs \
-  --ops-doc-text "礼物A 500元 神兽\n礼物B 50元 小动物"
-```
+1. Fetch ops doc content (Feishu URL → `lark-cli docs +fetch`, or use pasted text directly).
+2. Extract every gift item (name, price, visual notes) from the doc.
+3. Match each price to the 价效梯度 table (Agent has the full table in `agents/openai.yaml`).
+4. Output a markdown compliance table.
+5. Create a Feishu design doc in the user's personal space (`my_library`) via `lark-cli docs +create`, with ops text + design work table as content.
+6. Share the design doc URL with the user.
 
 ### Mode B — Full Design Workflow (with task)
 
-1. Read ops document from `--feishu-doc-url` or `--ops-doc-text`.
-2. Call intent analyzer (text LLM) → get structured plan with price-tier check.
-3. If `follow_up_question` is set → surface question to user, wait for reply, re-invoke with `--conversation`.
-4. Route to model via `--model-mode auto` (default) or `--model-mode pick`.
-5. Run `scripts/banana-image.mjs` with optimized prompt and image API settings.
-6. Return JSON with `intent_analysis`, `optimized_prompt`, `price_tier_analysis`, `model_routing`, and OpenClaw `media`/`mediaUrls` fields — OpenClaw delivers the image back to the Feishu conversation automatically.
+1. Agent analyzes designer intent: reference image roles, price-tier check, optimized prompt.
+2. If critical info is missing → Agent asks one focused question.
+3. Agent calls the script:
+
+```bash
+node ./scripts/banana-image.mjs \
+  --task "<optimized prompt>" \
+  [--input-image-path <path>] \
+  [--mask-path <path>] \
+  [--reference-image-path <path> --reference-label "<role>"] \
+  [--model-mode auto]
+```
+
+4. Script returns JSON with `mediaUrls` (base64 data URIs) — OpenClaw delivers the image back to the conversation.
 
 ## Price-Tier Compliance (价效规范)
 
-The intent analyzer has built-in knowledge of the Douyin Live gift price-tier spec (updated 2026-01-09):
+The Agent has built-in knowledge of the Douyin Live gift price-tier spec (updated 2026-01-09):
 
 | Tier | Price (元) | Subject | Duration | Camera |
 |------|-----------|---------|----------|--------|
@@ -98,44 +93,40 @@ The intent analyzer has built-in knowledge of the Douyin Live gift price-tier sp
 | 头部低 | 100-500 | 豪华消费品/中型动物 | 6s | 2 cuts |
 | 腰部高 | 50-100 | 交通工具/小动物 | 4s | none |
 | 腰部 | 9.9-50 | 食物/植物 | 3s | none |
-| 尾部高 | 2-9.9 | 日常消费品 | 1-2s | none |
+| 尾部高 | 2-9.9 | 日常消费品 | 1.5s | none |
 | 尾部 | 0-2 | 符号 | 0s | none |
 
 Price unit: supports both 元 and 钻 (1钻 = 0.1元).
 
 ## API Key Rules
 
-- Ask for the image API key only when both `ZENMUX_API_KEY` and `GEMINI_API_KEY` are unset.
-- `TEXT_LLM_API_KEY` is required for intent analysis; set it in the environment.
+- Only `ZENMUX_API_KEY` (or `GEMINI_API_KEY`) is needed — for image generation only.
+- No separate text LLM API key. The OpenClaw Agent handles all analysis.
 - Never write any key to disk, environment files, caches, or repo config.
 
 ## Commands
 
-### Full workflow (with intent analysis + Feishu):
+### Full workflow (Agent analyzes intent, then calls script):
 
 ```bash
-# Designer B: multi-reference combination with ops doc
+# Multi-reference combination
 node ./scripts/banana-image.mjs \
-  --task "参考图1取构图，参考图2取配色，做一个500元梯度的礼物" \
+  --task "take composition from ref1, color palette from ref2, 500元 tier divine beast emerging from light" \
   --reference-image-path ./ref1.png --reference-label "取构图" \
-  --reference-image-path ./ref2.png --reference-label "取配色" \
-  --feishu-doc-url "https://bytedance.larkoffice.com/docx/xxx"
+  --reference-image-path ./ref2.png --reference-label "取配色"
 ```
 
 ```bash
-# Designer A: edit base image
+# Edit base image
 node ./scripts/banana-image.mjs \
-  --task "增强光效和粒子冲击力" \
-  --input-image-path ./base.png \
-  --ops-doc-text "价位：2000钻，视觉方向：科技奇幻"
+  --task "enhance particle impact and light emission for 2000元 tier cosmic creature" \
+  --input-image-path ./base.png
 ```
 
-### Skip intent analysis (direct mode):
+### Local compliance helpers (pure functions, no API key):
 
-```bash
-node ./scripts/banana-image.mjs \
-  --task "Create a gift with glowing particles" \
-  --skip-intent
+```js
+import { parsePriceToYuan, matchPriceTier, buildComplianceRows, formatComplianceTable } from './scripts/intent-analyzer.mjs';
 ```
 
 ## References

@@ -5,9 +5,7 @@ import { basename, extname, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { pathToFileURL } from 'node:url';
 import readline from 'node:readline/promises';
-import { analyzeIntent, analyzeOpsDoc, buildDesignDocMarkdown } from './intent-analyzer.mjs';
 import { routeModel } from './model-router.mjs';
-import { fetchFeishuDoc, createFeishuDesignDoc } from './feishu-bridge.mjs';
 
 export const DEFAULT_BASE_URL = 'https://zenmux.ai/api/vertex-ai';
 export const DEFAULT_MODEL = 'google/gemini-3-pro-image-preview';
@@ -565,11 +563,6 @@ export function parseCliArgs(argv) {
       'output-dir': { type: 'string' },
       'api-key-header': { type: 'string', default: 'Authorization' },
       'api-key-prefix': { type: 'string', default: 'Bearer ' },
-      'ops-doc-text': { type: 'string' },
-      'feishu-doc-url': { type: 'string' },
-      'conversation': { type: 'string' },
-      'skip-intent': { type: 'boolean', default: false },
-      'skip-design-doc': { type: 'boolean', default: false },
       help: { type: 'boolean', default: false },
     },
   });
@@ -592,7 +585,7 @@ export function helpText() {
     '  node ./scripts/banana-image.mjs --task "创建一个礼物设计图"',
     '',
     'Core options:',
-    '  --task                  Natural-language task description.',
+    '  --task                  Natural-language task description (required). The Agent handles intent analysis before calling this script.',
     '  --model                 Image-capable model name. Defaults to google/gemini-3-pro-image-preview.',
     '  --model-mode            Model selection mode: auto (default) or pick.',
     '  --api-key               One-time API key.',
@@ -603,16 +596,6 @@ export function helpText() {
     '  --size                  Optional size hint.',
     '  --seed                  Optional numeric seed.',
     '  --output-dir            Output directory. Default: ./output/banana',
-    '',
-    'Intent analysis options:',
-    '  --ops-doc-text          Ops document text content (pasted).',
-    '  --feishu-doc-url        Ops document Feishu URL (fetched automatically).',
-    '  --conversation          Path to JSON file with conversation history array.',
-    '  --skip-intent           Skip intent analysis and go straight to image generation.',
-    '',
-    'Feishu delivery options:',
-    '  Results are returned via OpenClaw mediaUrls fields and delivered automatically through the Feishu/OpenClaw integration.',
-    '  --skip-design-doc       Skip creating Feishu design doc in Mode A (ops doc intake).',
     '',
     'Advanced options:',
     '  --base-url              Vertex AI base URL.',
@@ -641,118 +624,34 @@ export async function main(argv = process.argv.slice(2)) {
     process.stdout.write(`${helpText()}\n`);
     return 0;
   }
-
-  // --- Step 1: Load ops document ---
-  let opsDocContent = args['ops-doc-text'] ?? null;
-  if (!opsDocContent && args['feishu-doc-url']) {
-    try {
-      opsDocContent = await fetchFeishuDoc(args['feishu-doc-url']);
-    } catch (error) {
-      process.stderr.write(`Warning: failed to fetch Feishu doc: ${error.message}\n`);
-    }
-  }
-
-  // If no task provided but ops doc is present, run doc-only compliance analysis
-  const hasOpsDoc = Boolean(opsDocContent);
-  const hasTask = Boolean(args.task);
-  if (!hasTask) {
-    if (hasOpsDoc) {
-      try {
-        const { table, rows, doc_title } = await analyzeOpsDoc(opsDocContent, { env: process.env });
-        process.stdout.write(`${table}\n`);
-
-        if (!args['skip-design-doc']) {
-          const effectiveTitle = (doc_title ?? '礼物批次') + ' 设计文档';
-          const designMarkdown = buildDesignDocMarkdown(opsDocContent, rows);
-          try {
-            const docResult = await createFeishuDesignDoc(effectiveTitle, designMarkdown);
-            process.stderr.write(`设计文档已创建：${docResult.url ?? effectiveTitle}\n`);
-          } catch (docError) {
-            process.stderr.write(`Warning: 设计文档创建失败: ${docError.message}\n`);
-          }
-        }
-
-        return 0;
-      } catch (error) {
-        process.stderr.write(`Ops doc analysis failed: ${error.message}\n`);
-        return 1;
-      }
-    }
-    process.stderr.write('The --task option is required (or provide --ops-doc-text / --feishu-doc-url for compliance table only).\n');
+  if (!args.task) {
+    process.stderr.write('The --task option is required. The Agent performs intent analysis and then calls this script with an optimized prompt.\n');
     return 1;
   }
 
-  // --- Step 2: Load conversation history ---
-  let conversationHistory = [];
-  if (args.conversation) {
-    try {
-      const raw = await readFile(resolve(args.conversation), 'utf8');
-      conversationHistory = JSON.parse(raw);
-    } catch (error) {
-      process.stderr.write(`Warning: failed to load conversation history: ${error.message}\n`);
-    }
-  }
-
   const referenceImagePaths = args['reference-image-path'] ?? [];
-  const referenceLabels = args['reference-label'] ?? [];
 
-  // --- Step 3: Intent analysis ---
-  let intentAnalysis = null;
-  if (!args['skip-intent']) {
-    try {
-      intentAnalysis = await analyzeIntent(
-        {
-          userMessage: args.task,
-          opsDocContent,
-          referenceImagePaths,
-          referenceLabels,
-          inputImagePath: args['input-image-path'] ?? null,
-          maskPath: args['mask-path'] ?? null,
-          conversationHistory,
-        },
-        { env: process.env },
-      );
-
-      // If intent analysis needs more info, output the question and exit
-      if (intentAnalysis.follow_up_question) {
-        const output = {
-          status: 'follow_up_required',
-          follow_up_question: intentAnalysis.follow_up_question,
-          intent_summary: intentAnalysis.intent_summary,
-          price_tier_analysis: intentAnalysis.price_tier_analysis,
-        };
-        process.stdout.write(`${JSON.stringify(output, null, 2)}\n`);
-        return 0;
-      }
-    } catch (error) {
-      process.stderr.write(`Warning: intent analysis failed (${error.message}), proceeding without it.\n`);
-    }
-  }
-
-  // --- Step 4: Model routing ---
+  // Model routing (mode derived from task + input image presence)
   const { modelId, reason: modelReason } = routeModel({
     modelMode: args['model-mode'] ?? 'auto',
     explicitModel: args.model ?? null,
-    intentMode: intentAnalysis?.mode ?? 'txt2img',
-    recommendedModel: intentAnalysis?.recommended_model ?? null,
+    intentMode: classifyMode(args.task, {
+      inputImagePath: args['input-image-path'],
+      maskPath: args['mask-path'],
+    }),
+    recommendedModel: null,
     env: process.env,
   });
 
-  // Use optimized prompt from intent analysis if available
-  const effectiveTask = intentAnalysis?.optimized_prompt
-    ? intentAnalysis.optimized_prompt
-    : args.task;
-
-  // --- Step 5: Build and run image generation workflow ---
   const request = await buildWorkflowRequest({
-    task: effectiveTask,
+    task: args.task,
     apiKey: args['api-key'],
     inputImagePath: args['input-image-path'],
     maskPath: args['mask-path'],
     referenceImagePaths,
-    size: intentAnalysis?.parameters?.size ?? args.size,
+    size: args.size,
     steps: args.steps ? Number(args.steps) : null,
-    seed: intentAnalysis?.parameters?.seed ?? (args.seed ? Number(args.seed) : null),
+    seed: args.seed ? Number(args.seed) : null,
     outputDir: args['output-dir'],
     model: modelId,
     apiVersion: args['api-version'],
@@ -767,14 +666,7 @@ export async function main(argv = process.argv.slice(2)) {
     apiKeyPrefix: args['api-key-prefix'],
   });
 
-  // Attach intent analysis and model routing info to result
-  result.intent_analysis = intentAnalysis;
-  result.optimized_prompt = intentAnalysis?.optimized_prompt ?? null;
-  result.original_task = args.task;
   result.model_routing = { modelId, reason: modelReason };
-  if (result.repro_info) {
-    result.repro_info.model = modelId;
-  }
 
   process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
   return result.error ? 1 : 0;
@@ -784,4 +676,3 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   const exitCode = await main();
   process.exit(exitCode);
 }
-
