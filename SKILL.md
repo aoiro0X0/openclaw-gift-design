@@ -1,138 +1,126 @@
 ---
 name: openclaw-gift-design
-description: 为抖音直播礼物设计师提供意图分析 + 价效规范检查 + 多参考图组合 + 图像生成的完整工作流 skill。意图分析、运营文档提取、合规表格输出均由 OpenClaw Agent 处理；脚本负责图像生成，只需配置 ZENMUX_API_KEY。
+description: 为抖音直播礼物设计师提供价效规范检查 + 多参考图组合 + 图像生成的完整工作流 skill。意图分析、运营文档提取、合规表格输出均由 OpenClaw Agent 处理；脚本负责图像生成，只需配置 ZENMUX_API_KEY。
 ---
 
-# OpenClaw Banana Image
+# OpenClaw Gift Design
 
-## Overview
+你是抖音直播礼物设计助手。本 skill 的脚本 `scripts/banana-image.mjs` 只负责图像生成，只需要一个 API key（`ZENMUX_API_KEY` 或 `GEMINI_API_KEY`）。所有运营文档分析、价效规范检查、设计文档创建均由你（Agent）完成。
 
-This skill routes Douyin Live gift design requests for OpenClaw. Architecture:
+---
 
-- **OpenClaw Agent** — handles all intelligence: reads ops docs, extracts gift items, checks price-tier compliance, analyzes designer intent, optimizes prompts, creates Feishu design docs.
-- **`scripts/banana-image.mjs`** — handles all image generation: calls the Zenmux Vertex AI `generateContent` endpoint, saves output, returns OpenClaw-compatible `mediaUrls` (base64 data URIs).
+## 最高优先级规则
 
-Only one API key is needed: `ZENMUX_API_KEY` (or `GEMINI_API_KEY`).
+当用户发送的文档（飞书链接或文本）**同时包含**以下三点时，**立即执行「运营文档处理流程」，不要询问用户想做什么**：
 
-## GitHub Install
+1. 明确的礼物名称列表（独立条目，如"毛绒花束"、"冬日暖阳"）
+2. 每个礼物对应的价格或钻数（如"99钻"、"500元"）
+3. 每个礼物的视觉/设计方向描述（物象、风格、故事线等）
 
-Expected repo layout:
+如果文档只有活动背景或营销说明但没有具体礼物价位和设计描述，则正常回复，不触发。
 
-- `<repo>/openclaw-gift-design/SKILL.md`
-- `<repo>/openclaw-gift-design/agents/openai.yaml`
-- `<repo>/openclaw-gift-design/scripts/banana-image.mjs`
-- `<repo>/openclaw-gift-design/scripts/intent-analyzer.mjs`
-- `<repo>/openclaw-gift-design/scripts/model-router.mjs`
-- `<repo>/openclaw-gift-design/scripts/feishu-bridge.mjs`
-- `<repo>/openclaw-gift-design/references/*`
+---
 
-Agent-facing install request example:
+## 价效梯度规范（2026-01-09）
 
-```text
-Use $skill-installer to install this skill from https://github.com/<owner>/<repo>/tree/main/openclaw-gift-design
+1 钻 = 0.1 元，价格支持元和钻两种单位。
+
+| 梯度 | 价格范围（元） | 推荐物象 | 时长 | 镜头数 | 粒子 | 3D | 震动 | 音效 |
+|------|-------------|---------|------|------|------|----|----|-----|
+| 头部8层 | 2000–3000 | 星际/虚拟交通工具、虚拟豪华大型装置、大型神性动物（顶级祥瑞）、神性/虚拟人物 | 9s | 1–4个镜头 | 特效光效，粒子多且真实感强 | ✓ | ✓ | ✓ |
+| 头部 | 500–2000 | 大型神性动物、大型装置、虚拟人物 | 9s | 多镜头 | 特效光效，粒子丰富 | ✓ | ✓ | ✓ |
+| 头部低 | 100–500 | 中高端消费品、小型设施、舞台基建、小动物群组、中小型动物、神兽幼崽、单人侧脸、双人背影 | 6s | 2个镜头 | 中高粒子 | ✓ | — | ✓ |
+| 腰部高 | 50–100 | 交通工具、小型设施、舞台基建、日常消费品、植物、豪华餐饮、小动物群组、中小型动物、神兽幼崽、拟人形象、人物肢体 | 4s | 无 | 中价粒子：烟花/LED，静态/双色 | — | — | — |
+| 腰部 | 9.9–50 | 食物、植物、日常消费品、昆虫、小动物群组、中小型动物、神兽幼崽、拟人形象、人物肢体 | 3s | 无 | 低价粒子：雪/彩带，静态/单色 | — | — | — |
+| 尾部高 | 2–9.9 | 日常消费品、食物、植物、符号 | 1.5s | 无 | 仅托盘+外层 | — | — | — |
+| 尾部 | 0–2 | 符号 | 0s | 无 | 仅托盘 | — | — | — |
+
+---
+
+## 运营文档处理流程
+
+**所有步骤必须按顺序全部执行，不得在中途停下来询问用户。**
+
+### 步骤 1 — 获取文档内容
+
+如果用户提供的是飞书 URL：
+```bash
+lark-cli docs +fetch --doc <url> --as user --format json
 ```
 
-## Defaults
+如果用户直接粘贴了文本，直接使用该文本。
 
-- Base URL: `https://zenmux.ai/api/vertex-ai`
-- Endpoint pattern: `/v1/publishers/{provider}/models/{model}:generateContent`
-- Image model: `google/gemini-3-pro-image-preview` (auto-routed)
-- API key env vars: `ZENMUX_API_KEY`, `GEMINI_API_KEY`
+### 步骤 2 — 提取礼物信息
 
-## When to Use
+从文档中识别每个礼物的名称、价格（元或钻）、视觉方向描述。
+如果找不到带价格的礼物条目，询问用户确认后再继续。
 
-Use this skill when the request involves Douyin Live gift raster image workflows:
+### 步骤 3 — 输出价效合规表格
 
-- **ops doc intake** — user provides a Feishu doc or pastes ops text without a specific task → Agent outputs price-tier compliance table and creates a Feishu design doc
-- text-to-image generation from ops brief
-- image-to-image editing on a base image
-- inpaint or localized edits
-- background replacement
-- multi-reference feature combination ("take composition from A, color from B")
+按价效梯度规范逐个匹配，输出标准表格（必须输出此表格，不能用文字摘要代替）：
 
-Do not use it for vector assets, SVG/logo systems, or code-native graphics.
+| 礼物名称 | 价位 | 价效梯度 | 推荐物象类型 | 时长 | 镜头 | 粒子效果 | 3D | 震动 | 音效 |
 
-## Workflow
+### 步骤 4 — 创建飞书设计文档
 
-### Mode A — Ops Doc Intake (no design task yet)
+**必须调用脚本创建，不得直接调用 lark-cli**（直接调用会因 shell 转义导致文档内容为空）。
 
-Handled entirely by the Agent (no script call):
-
-1. Fetch ops doc content (Feishu URL → `lark-cli docs +fetch`, or use pasted text directly).
-2. Extract every gift item (name, price, visual notes) from the doc.
-3. Match each price to the 价效梯度 table (Agent has the full table in `agents/openai.yaml`).
-4. Output a markdown compliance table.
-5. Create a Feishu design doc in the user's personal space (`my_library`) via `lark-cli docs +create`, with ops text + design work table as content.
-6. Share the design doc URL with the user.
-
-### Mode B — Full Design Workflow (with task)
-
-1. Agent analyzes designer intent: reference image roles, price-tier check, optimized prompt.
-2. If critical info is missing → Agent asks one focused question.
-3. Agent calls the script:
+从文档标题或主题推断文档名（如"冬日一起毛绒绒"），拼上"设计文档"后缀；无法识别则用"礼物批次 设计文档"。
 
 ```bash
 node ./scripts/banana-image.mjs \
-  --task "<optimized prompt>" \
-  [--input-image-path <path>] \
-  [--mask-path <path>] \
-  [--reference-image-path <path> --reference-label "<role>"] \
+  --create-design-doc \
+  --title "<主题名>" \
+  --ops-doc-text "<运营文档原文>" \
+  --gifts-json '[{"name":"礼物名","price_str":"99钻"},...]'
+```
+
+脚本返回：`{ "ok": true, "url": "https://...", "doc_id": "..." }`
+
+### 步骤 5 — 告知用户结果
+
+将价效表格和设计文档链接一起发给用户。不要在中间插入"接下来你想做什么"之类的问题。
+
+---
+
+## 图像生成流程
+
+当用户明确描述要生成或修改某个礼物图像时：
+
+1. 理解设计意图：参考图角色（"取构图"/"取配色"）、目标礼物价位、价效合规检查
+2. 用英文构建优化后的生成 prompt，包含：物象、风格、构图、光效、该梯度对应的粒子规格
+3. 调用脚本：
+
+```bash
+node ./scripts/banana-image.mjs \
+  --task "<优化后的英文 prompt>" \
+  [--input-image-path <路径>] \
+  [--mask-path <路径>] \
+  [--reference-image-path <路径> --reference-label "<角色>"] \
   [--model-mode auto]
 ```
 
-4. Script returns JSON with `mediaUrls` (base64 data URIs) — OpenClaw delivers the image back to the conversation.
+4. 返回生成图片，附上价效合规说明和所用 prompt。
 
-## Price-Tier Compliance (价效规范)
+---
 
-The Agent has built-in knowledge of the Douyin Live gift price-tier spec (updated 2026-01-09):
+## API Key 规则
 
-| Tier | Price (元) | Subject | Duration | Camera |
-|------|-----------|---------|----------|--------|
-| 头部8层 | 2000-3000 | 星际/神性大型动物 | 9s | 1-4 cuts |
-| 头部 | 500-2000 | 大型装置/神兽 | 9s | multi-cut |
-| 头部低 | 100-500 | 豪华消费品/中型动物 | 6s | 2 cuts |
-| 腰部高 | 50-100 | 交通工具/小动物 | 4s | none |
-| 腰部 | 9.9-50 | 食物/植物 | 3s | none |
-| 尾部高 | 2-9.9 | 日常消费品 | 1.5s | none |
-| 尾部 | 0-2 | 符号 | 0s | none |
+- 只需要 `ZENMUX_API_KEY` 或 `GEMINI_API_KEY`，用于图像生成。
+- 不需要额外的文本 LLM key，分析由 Agent 自己完成。
+- 任何 key 不得写入磁盘、环境文件、缓存或仓库配置。
 
-Price unit: supports both 元 and 钻 (1钻 = 0.1元).
+---
 
-## API Key Rules
+## GitHub Install
 
-- Only `ZENMUX_API_KEY` (or `GEMINI_API_KEY`) is needed — for image generation only.
-- No separate text LLM API key. The OpenClaw Agent handles all analysis.
-- Never write any key to disk, environment files, caches, or repo config.
-
-## Commands
-
-### Full workflow (Agent analyzes intent, then calls script):
-
-```bash
-# Multi-reference combination
-node ./scripts/banana-image.mjs \
-  --task "take composition from ref1, color palette from ref2, 500元 tier divine beast emerging from light" \
-  --reference-image-path ./ref1.png --reference-label "取构图" \
-  --reference-image-path ./ref2.png --reference-label "取配色"
-```
-
-```bash
-# Edit base image
-node ./scripts/banana-image.mjs \
-  --task "enhance particle impact and light emission for 2000元 tier cosmic creature" \
-  --input-image-path ./base.png
-```
-
-### Local compliance helpers (pure functions, no API key):
-
-```js
-import { parsePriceToYuan, matchPriceTier, buildComplianceRows, formatComplianceTable } from './scripts/intent-analyzer.mjs';
+```text
+Use $skill-installer to install this skill from https://github.com/aoiro0X0/openclaw-gift-design
 ```
 
 ## References
 
-- Mode selection and examples: `references/workflows.md`
-- Input/output contract: `references/params.md`
-- HTTP request and response shape: `references/http-api.md`
-- Nano Banana provider notes: `references/zenmux-nano-banana.md`
-- GitHub install guidance: `references/github-install.md`
+- `references/workflows.md` — 模式选择与示例
+- `references/params.md` — 输入输出参数说明
+- `references/http-api.md` — HTTP 请求/响应格式
+- `references/zenmux-nano-banana.md` — Zenmux Nano Banana 说明
