@@ -185,44 +185,69 @@ export function formatComplianceTable(rows) {
 }
 
 /**
- * Return a color emoji for a tier label (used in design doc table rows).
- * 头部8层/头部 → 🔴  头部低 → 🟠  腰部高/腰部 → 🟡  尾部高/尾部 → 🟢
+ * Return the Feishu background-color name for a tier label.
+ * Supported values: red, orange, yellow, green, blue, purple, gray
  */
-function tierColorEmoji(tierLabel) {
-  if (tierLabel === '头部8层' || tierLabel === '头部') return '🔴';
-  if (tierLabel === '头部低') return '🟠';
-  if (tierLabel === '腰部高' || tierLabel === '腰部') return '🟡';
-  if (tierLabel === '尾部高' || tierLabel === '尾部') return '🟢';
-  return '⚪';
+function tierBgColor(tierLabel) {
+  if (tierLabel === '头部8层' || tierLabel === '头部') return 'red';
+  if (tierLabel === '头部低') return 'orange';
+  if (tierLabel === '腰部高' || tierLabel === '腰部') return 'yellow';
+  if (tierLabel === '尾部高' || tierLabel === '尾部') return 'green';
+  return 'gray';
 }
 
 /**
- * Build the full design document markdown:
+ * Build the full design document markdown using lark-table syntax:
  * ops doc content on top, then a design work table below.
  *
- * Auto-generated rows (价效区块) carry a tier color emoji per column.
- * 时长 / 镜头数 / 切镜次数 are indented as sub-rows under 价效梯度.
+ * Auto-generated rows (价效 sub-block) have per-column background colors
+ * matching the gift's price tier, using <text background-color="…"> inside
+ * each <lark-td>. User-fillable rows are plain white.
+ *
+ * Column widths are computed dynamically so the table fills ~730 px.
  */
 export function buildDesignDocMarkdown(opsDocContent, rows) {
-  const header = ['| 字段 |', '|:------|'];
-  const colHeaders = rows.map((r) => `${r.name}（${r.price_str}）`);
-  header[0] += ' ' + colHeaders.join(' | ') + ' |';
-  header[1] += colHeaders.map(() => ':------').join('|') + '|';
+  const TOTAL_WIDTH = 730;
+  const LABEL_COL_WIDTH = 130;
+  const giftColWidth = Math.max(100, Math.floor((TOTAL_WIDTH - LABEL_COL_WIDTH) / rows.length));
+  const colWidths = [LABEL_COL_WIDTH, ...rows.map(() => giftColWidth)].join(',');
 
-  const makeRow = (label, values) =>
-    `| ${label} | ${values.join(' | ')} |`;
+  const td = (content) => `<lark-td>\n\n${content}\n\n</lark-td>`;
+  const colorTd = (content, bgColor) => td(`<text background-color="${bgColor}">${content}</text>`);
 
-  const tableLines = [
-    header[0],
-    header[1],
-    makeRow('🎨 价效梯度', rows.map((r) => `${tierColorEmoji(r.tier_label)} **${r.tier_label}**`)),
-    makeRow('　└ 时长', rows.map((r) => r.duration)),
-    makeRow('　└ 镜头数', rows.map((r) => r.camera_cuts)),
-    makeRow('　└ 切镜次数', rows.map((r) => r.cuts_count)),
-    makeRow('🖼 关键帧设计', rows.map(() => ' ')),
-    makeRow('📺 直播间背景展示', rows.map(() => ' ')),
-    makeRow('🔖 ICON预览', rows.map(() => ' ')),
-  ];
+  const headerRow = [
+    '<lark-tr>',
+    td('字段'),
+    ...rows.map((r) => td(`**${r.name}（${r.price_str}）**`)),
+    '</lark-tr>',
+  ].join('\n');
+
+  const autoRow = (label, values) => [
+    '<lark-tr>',
+    td(label),
+    ...rows.map((r, i) => colorTd(values[i], tierBgColor(r.tier_label))),
+    '</lark-tr>',
+  ].join('\n');
+
+  const emptyRow = (label) => [
+    '<lark-tr>',
+    td(label),
+    ...rows.map(() => td(' ')),
+    '</lark-tr>',
+  ].join('\n');
+
+  const table = [
+    `<lark-table column-widths="${colWidths}" header-row="true" header-column="true">`,
+    headerRow,
+    autoRow('价效梯度', rows.map((r) => r.tier_label)),
+    autoRow('└ 时长', rows.map((r) => r.duration)),
+    autoRow('└ 镜头数', rows.map((r) => r.camera_cuts)),
+    autoRow('└ 切镜次数', rows.map((r) => r.cuts_count)),
+    emptyRow('关键帧设计'),
+    emptyRow('直播间背景展示'),
+    emptyRow('ICON预览'),
+    '</lark-table>',
+  ].join('\n');
 
   return [
     opsDocContent.trim(),
@@ -231,6 +256,6 @@ export function buildDesignDocMarkdown(opsDocContent, rows) {
     '',
     '## 设计工作表',
     '',
-    ...tableLines,
+    table,
   ].join('\n');
 }

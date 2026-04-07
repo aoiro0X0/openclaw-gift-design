@@ -41,18 +41,158 @@ interface:
        - Title: "<主题名> 设计文档" (infer theme from ops doc title or content; fall back to "礼物批次 设计文档")
        - Content: ops doc text (verbatim), then a horizontal rule, then a design work table:
 
-         | 字段 | 礼物A（500钻） | 礼物B（200钻） | ... |
-         |:------|:--------------|:--------------|:----|
-         | 🎨 价效梯度 | 🟠 **头部低** | 🟡 **腰部** | |
-         | 　└ 时长 | 6s | 3s | |
-         | 　└ 镜头数 | 2个镜头 | 无 | |
-         | 　└ 切镜次数 | 2 | 0 | |
-         | 🖼 关键帧设计 | | | |
-         | 📺 直播间背景展示 | | | |
-         | 🔖 ICON预览 | | | |
+         Use <lark-table> (NOT standard markdown tables) so column widths and cell colors work.
+         Column widths: label col 130px, each gift col = floor((730-130)/N) px, min 100px.
+         Example for 2 gifts: column-widths="130,300,300"
 
-       Tier color emoji rules: 头部8层/头部 → 🔴, 头部低 → 🟠, 腰部高/腰部 → 🟡, 尾部高/尾部 → 🟢, 未识别 → ⚪.
-       Apply the matching emoji + bold the tier label in every gift column of the 🎨 价效梯度 row.
+         ```
+         <lark-table column-widths="130,300,300" header-row="true" header-column="true">
+         <lark-tr>
+         <lark-td>
+
+         字段
+
+         </lark-td>
+         <lark-td>
+
+         **礼物A（500钻）**
+
+         </lark-td>
+         <lark-td>
+
+         **礼物B（200钻）**
+
+         </lark-td>
+         </lark-tr>
+         <lark-tr>
+         <lark-td>
+
+         价效梯度
+
+         </lark-td>
+         <lark-td>
+
+         <text background-color="orange">头部低</text>
+
+         </lark-td>
+         <lark-td>
+
+         <text background-color="yellow">腰部</text>
+
+         </lark-td>
+         </lark-tr>
+         <lark-tr>
+         <lark-td>
+
+         └ 时长
+
+         </lark-td>
+         <lark-td>
+
+         <text background-color="orange">6s</text>
+
+         </lark-td>
+         <lark-td>
+
+         <text background-color="yellow">3s</text>
+
+         </lark-td>
+         </lark-tr>
+         <lark-tr>
+         <lark-td>
+
+         └ 镜头数
+
+         </lark-td>
+         <lark-td>
+
+         <text background-color="orange">2个镜头</text>
+
+         </lark-td>
+         <lark-td>
+
+         <text background-color="yellow">无</text>
+
+         </lark-td>
+         </lark-tr>
+         <lark-tr>
+         <lark-td>
+
+         └ 切镜次数
+
+         </lark-td>
+         <lark-td>
+
+         <text background-color="orange">2</text>
+
+         </lark-td>
+         <lark-td>
+
+         <text background-color="yellow">0</text>
+
+         </lark-td>
+         </lark-tr>
+         <lark-tr>
+         <lark-td>
+
+         关键帧设计
+
+         </lark-td>
+         <lark-td>
+
+
+
+         </lark-td>
+         <lark-td>
+
+
+
+         </lark-td>
+         </lark-tr>
+         <lark-tr>
+         <lark-td>
+
+         直播间背景展示
+
+         </lark-td>
+         <lark-td>
+
+
+
+         </lark-td>
+         <lark-td>
+
+
+
+         </lark-td>
+         </lark-tr>
+         <lark-tr>
+         <lark-td>
+
+         ICON预览
+
+         </lark-td>
+         <lark-td>
+
+
+
+         </lark-td>
+         <lark-td>
+
+
+
+         </lark-td>
+         </lark-tr>
+         </lark-table>
+         ```
+
+       Tier → background-color mapping (use <text background-color="X"> in all 4 auto rows per column):
+         头部8层 / 头部  → red
+         头部低          → orange
+         腰部高 / 腰部   → yellow
+         尾部高 / 尾部   → green
+         未识别          → gray
+       Do NOT add emoji anywhere. Do NOT use standard markdown table (|---|) syntax.
 
        - Command: `lark-cli docs +create --title "<title>" --markdown "<content>" --wiki-space my_library --as user --format json`
     6. Show the compliance table to the user and share the design doc URL.
