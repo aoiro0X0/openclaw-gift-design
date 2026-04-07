@@ -32,7 +32,7 @@ export async function createFeishuDesignDoc(title, markdownContent, { identity =
     throw new Error('title is required to create a Feishu design document.');
   }
   const result = await runLarkCli(
-    ['docs', '+create', '--title', title.trim(), '--markdown', markdownContent, '--wiki-space', 'my_library'],
+    ['docs', '+create', '--title', title.trim(), '--markdown', markdownContent],
     { identity, execImpl },
   );
   if (!result.ok) {
